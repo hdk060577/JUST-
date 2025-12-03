@@ -1,0 +1,7 @@
+{
+  "name": "Copy of JUST - Study & Growth",
+  "description": "An app to boost motivation, support social reconnection, and build healthy habits through small achievements and community.",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
