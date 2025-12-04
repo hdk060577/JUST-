@@ -2,14 +2,51 @@ import React, { useState, useEffect, useRef } from 'react';
 import { HashRouter as Router, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { User, Goal, Post, Friend } from './types';
-import * as GeminiService from './services/geminiService';
 import Splash from './components/Splash';
 import BottomNav from './components/BottomNav';
-import ApiKeyModal from './components/ApiKeyModal';
 import { 
   Plus, CheckCircle, Video, MicOff, 
-  Send, Heart, Lock, Globe, Trophy, ShoppingBag, MessageCircle, Mic, Settings, Key, RefreshCw
+  Send, Heart, Lock, Globe, Trophy, ShoppingBag, MessageCircle, Mic, RefreshCw
 } from 'lucide-react';
+
+// --- Local Data Constants (Fully Local) ---
+const LOCAL_QUOTES = [
+  "시작이 반이다. 오늘 시작한 당신이 멋집니다.",
+  "어제보다 나은 내일을 위해 오늘을 살아요.",
+  "당신의 속도로 가도 괜찮아요. 멈추지만 마세요.",
+  "작은 노력이 모여 큰 변화를 만듭니다.",
+  "힘든 순간이 지나면 반드시 성장해 있을 거예요.",
+  "오늘의 공부가 내일의 꿈이 됩니다.",
+  "휴식도 전략입니다. 잠시 쉬어가세요.",
+  "포기하지 않는 한 실패는 없습니다."
+];
+
+const LOCAL_GOALS: { text: string; type: 'study' | 'health' | 'social' }[] = [
+  { text: '물 한 잔 마시기', type: 'health' },
+  { text: '창문 열고 환기하기', type: 'health' },
+  { text: '5분 스트레칭 하기', type: 'health' },
+  { text: '눈 감고 1분 명상하기', type: 'health' },
+  { text: '책상 정리하기', type: 'study' },
+  { text: '오늘의 할 일 3가지 적기', type: 'study' },
+  { text: '영단어 1개 외우기', type: 'study' },
+  { text: '책 5페이지 읽기', type: 'study' },
+  { text: '친구에게 안부 문자 보내기', type: 'social' },
+  { text: '커뮤니티에 응원 댓글 달기', type: 'social' },
+  { text: '가족과 대화하기', type: 'social' },
+  { text: '거울 보고 웃어보기', type: 'social' }
+];
+
+const getRandomQuote = () => LOCAL_QUOTES[Math.floor(Math.random() * LOCAL_QUOTES.length)];
+
+const getRandomGoals = (count: number = 3): Goal[] => {
+  const shuffled = [...LOCAL_GOALS].sort(() => 0.5 - Math.random());
+  return shuffled.slice(0, count).map((g, idx) => ({
+    id: `local-goal-${Date.now()}-${idx}`,
+    text: g.text,
+    completed: false,
+    type: g.type
+  }));
+};
 
 // --- Mock Data ---
 const MOCK_FRIENDS: Friend[] = [
@@ -32,22 +69,22 @@ const Onboarding: React.FC<{ onComplete: (name: string) => void }> = ({ onComple
         className="bg-white p-8 rounded-2xl shadow-xl w-full max-w-md text-center"
       >
         <div className="mb-6">
-          <h1 className="text-4xl font-bold text-indigo-600 tracking-widest mb-2">JUST</h1>
-          <p className="text-gray-400 text-sm">Just Start, Just Do It.</p>
+          <h1 className="text-4xl font-black text-indigo-600 tracking-widest mb-2">JUST</h1>
+          <p className="text-gray-400 text-sm font-medium">Just Start, Just Do It.</p>
         </div>
         <h2 className="text-xl font-bold text-gray-800 mb-2">환영합니다!</h2>
-        <p className="text-gray-500 mb-6">앱에서 사용할 닉네임을 입력해주세요.</p>
+        <p className="text-gray-500 mb-6 text-sm">앱에서 사용할 닉네임을 입력해주세요.</p>
         <input 
           type="text" 
           value={name}
           onChange={(e) => setName(e.target.value)}
           placeholder="닉네임 입력"
-          className="w-full border-b-2 border-indigo-200 py-2 text-center text-xl focus:outline-none focus:border-indigo-600 transition-colors mb-8 bg-transparent"
+          className="w-full border-b-2 border-indigo-200 py-3 text-center text-xl focus:outline-none focus:border-indigo-600 transition-colors mb-8 bg-transparent text-slate-800 font-bold"
         />
         <button 
           onClick={() => name && onComplete(name)}
           disabled={!name}
-          className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold text-lg disabled:opacity-50 hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200"
+          className="w-full bg-indigo-600 text-white py-4 rounded-xl font-bold text-lg disabled:opacity-50 hover:bg-indigo-700 transition-colors shadow-lg shadow-indigo-200"
         >
           시작하기
         </button>
@@ -60,44 +97,31 @@ const Onboarding: React.FC<{ onComplete: (name: string) => void }> = ({ onComple
 interface DashboardProps {
   user: User;
   setUser: React.Dispatch<React.SetStateAction<User>>;
-  onOpenSettings: () => void;
-  keyVersion: number; // Used to trigger data refresh
 }
 
-const Dashboard: React.FC<DashboardProps> = ({ user, setUser, onOpenSettings, keyVersion }) => {
+const Dashboard: React.FC<DashboardProps> = ({ user, setUser }) => {
   const [quote, setQuote] = useState<string>("오늘도 힘찬 하루 보내세요!");
   const [goals, setGoals] = useState<Goal[]>([]);
   const [loadingGoals, setLoadingGoals] = useState(false);
 
   useEffect(() => {
-    // Refresh data whenever keyVersion changes (key saved/deleted)
-    const fetchData = async () => {
-      if (GeminiService.hasApiKey()) {
-        const q = await GeminiService.getDailyQuote();
-        setQuote(q);
-        loadAIRecommendation();
-      } else {
-        setQuote("설정에서 API 키를 등록하면 AI 응원을 받을 수 있어요!");
-        // Load default goals if no key
-        const defaults = await GeminiService.getRecommendedGoals();
-        setGoals(prev => {
-            if (prev.length > 0) return prev; // Don't overwrite if user has goals
-            return defaults;
-        });
-      }
-    };
-    fetchData();
-  }, [keyVersion]);
+    // Initial Load
+    setQuote(getRandomQuote());
+    setGoals(getRandomGoals());
+  }, []);
 
-  const loadAIRecommendation = async () => {
+  const loadRecommendation = () => {
     setLoadingGoals(true);
-    const recGoals = await GeminiService.getRecommendedGoals();
-    setGoals(prev => {
-        // Simple de-duplication
-        const newGoals = recGoals.filter(ng => !prev.some(pg => pg.text === ng.text));
-        return [...prev, ...newGoals];
-    });
-    setLoadingGoals(false);
+    // Simulate network delay for effect
+    setTimeout(() => {
+        const newGoals = getRandomGoals(3);
+        setGoals(prev => {
+            // Simply replacing for now to show "refresh" effect
+            return newGoals;
+        });
+        setQuote(getRandomQuote());
+        setLoadingGoals(false);
+    }, 600);
   };
 
   const toggleGoal = (id: string) => {
@@ -135,27 +159,22 @@ const Dashboard: React.FC<DashboardProps> = ({ user, setUser, onOpenSettings, ke
 
   return (
     <div className="pb-24 p-6 space-y-6 animate-fade-in relative">
-      {!GeminiService.hasApiKey() && (
-        <div onClick={onOpenSettings} className="bg-red-50 border border-red-100 p-3 rounded-xl flex items-center justify-between cursor-pointer active:bg-red-100 transition-colors">
-            <div className="flex items-center gap-2 text-red-600 text-xs font-bold">
-                <Key size={14} />
-                <span>AI 기능을 위해 API 키를 설정해주세요</span>
-            </div>
-            <Settings size={14} className="text-red-400" />
-        </div>
-      )}
-
       {/* Header / Quote */}
       <motion.div 
         initial={{ opacity: 0, y: -20 }} 
         animate={{ opacity: 1, y: 0 }}
-        className="bg-gradient-to-br from-indigo-500 to-purple-600 p-6 rounded-3xl text-white shadow-xl shadow-indigo-200"
+        className="bg-gradient-to-br from-indigo-500 to-purple-600 p-6 rounded-3xl text-white shadow-xl shadow-indigo-200 relative overflow-hidden"
       >
-        <p className="font-medium opacity-80 mb-2 text-sm flex items-center gap-2">
-            <span className="bg-white/20 px-2 py-0.5 rounded-full text-xs">Today's Pick</span>
-            오늘의 응원
-        </p>
-        <h2 className="text-lg font-bold leading-relaxed tracking-wide">"{quote}"</h2>
+        <div className="relative z-10">
+            <p className="font-medium opacity-80 mb-2 text-sm flex items-center gap-2">
+                <span className="bg-white/20 px-2 py-0.5 rounded-full text-[10px] font-bold">Today's Pick</span>
+                오늘의 응원
+            </p>
+            <h2 className="text-lg font-bold leading-relaxed tracking-wide">"{quote}"</h2>
+        </div>
+        <div className="absolute right-[-10px] top-[-10px] opacity-10">
+            <Trophy size={100} />
+        </div>
       </motion.div>
 
       {/* Stamp Board */}
@@ -209,53 +228,50 @@ const Dashboard: React.FC<DashboardProps> = ({ user, setUser, onOpenSettings, ke
             <p className="text-xs text-slate-400">하나씩 천천히 달성해보세요</p>
           </div>
           <button 
-            onClick={loadAIRecommendation} 
+            onClick={loadRecommendation} 
             disabled={loadingGoals}
-            className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors flex items-center gap-1"
+            className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors flex items-center gap-1 active:scale-95"
           >
-             {loadingGoals ? <RefreshCw size={12} className="animate-spin"/> : <Plus size={12} />}
-             AI 추천받기
+             {loadingGoals ? <RefreshCw size={12} className="animate-spin"/> : <RefreshCw size={12} />}
+             새로고침
           </button>
         </div>
         
         <div className="space-y-3">
-            {goals.map((goal) => (
-            <motion.div 
-                key={goal.id}
-                layout
-                initial={{ opacity: 0, x: -20 }}
-                animate={{ opacity: 1, x: 0 }}
-                className={`group p-4 rounded-2xl border transition-all duration-200 flex items-center gap-4 cursor-pointer ${goal.completed ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-white border-indigo-100 shadow-sm hover:shadow-md hover:border-indigo-200'}`}
-                onClick={() => toggleGoal(goal.id)}
-            >
-                <div className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors duration-300 ${goal.completed ? 'bg-indigo-100 border-indigo-100' : 'border-indigo-200 group-hover:border-indigo-400'}`}>
-                {goal.completed && <CheckCircle size={14} className="text-indigo-600" />}
-                </div>
-                <div className="flex-1">
-                <span className={`block font-medium transition-colors ${goal.completed ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
-                    {goal.text}
-                </span>
-                <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${
-                    goal.type === 'health' ? 'bg-green-100 text-green-600' : 
-                    goal.type === 'social' ? 'bg-pink-100 text-pink-600' : 'bg-blue-100 text-blue-600'
-                }`}>
-                    {goal.type}
-                </span>
-                </div>
-            </motion.div>
-            ))}
-            
-            {goals.length === 0 && !loadingGoals && (
-                <div className="text-center py-8 text-slate-400 text-sm">
-                    아직 목표가 없어요. AI에게 추천을 받아보세요!
-                </div>
-            )}
+            <AnimatePresence mode='wait'>
+                {goals.map((goal) => (
+                <motion.div 
+                    key={goal.id}
+                    layout
+                    initial={{ opacity: 0, y: 10 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    exit={{ opacity: 0, y: -10 }}
+                    className={`group p-4 rounded-2xl border transition-all duration-200 flex items-center gap-4 cursor-pointer select-none ${goal.completed ? 'bg-slate-50 border-slate-100 opacity-60' : 'bg-white border-indigo-100 shadow-sm hover:shadow-md hover:border-indigo-200'}`}
+                    onClick={() => toggleGoal(goal.id)}
+                >
+                    <div className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors duration-300 ${goal.completed ? 'bg-indigo-100 border-indigo-100' : 'border-indigo-200 group-hover:border-indigo-400'}`}>
+                    {goal.completed && <CheckCircle size={14} className="text-indigo-600" />}
+                    </div>
+                    <div className="flex-1">
+                    <span className={`block font-medium transition-colors ${goal.completed ? 'text-slate-400 line-through' : 'text-slate-700'}`}>
+                        {goal.text}
+                    </span>
+                    <span className={`text-[10px] uppercase font-bold px-1.5 py-0.5 rounded ${
+                        goal.type === 'health' ? 'bg-green-100 text-green-600' : 
+                        goal.type === 'social' ? 'bg-pink-100 text-pink-600' : 'bg-blue-100 text-blue-600'
+                    }`}>
+                        {goal.type}
+                    </span>
+                    </div>
+                </motion.div>
+                ))}
+            </AnimatePresence>
         </div>
 
         {loadingGoals && (
           <div className="text-center py-8">
             <div className="animate-spin w-6 h-6 border-2 border-indigo-600 border-t-transparent rounded-full mx-auto mb-2"></div>
-            <p className="text-xs text-indigo-400">AI가 맞춤 목표를 생각중입니다...</p>
+            <p className="text-xs text-indigo-400">맞춤 목표를 가져오고 있습니다...</p>
           </div>
         )}
       </div>
@@ -271,7 +287,10 @@ const Dashboard: React.FC<DashboardProps> = ({ user, setUser, onOpenSettings, ke
             <p className="text-xs text-slate-500">열심히 모은 포인트, 커피로 바꿔보세요!</p>
           </div>
         </div>
-        <button className="px-4 py-2 bg-white text-orange-600 text-xs font-bold rounded-xl shadow-sm border border-orange-100 hover:bg-orange-50 transition-colors">
+        <button 
+            onClick={() => alert("🛍️ 상점 기능은 준비 중입니다!\n열심히 포인트를 모아주세요 :)")}
+            className="px-4 py-2 bg-white text-orange-600 text-xs font-bold rounded-xl shadow-sm border border-orange-100 hover:bg-orange-50 transition-colors"
+        >
           구경하기
         </button>
       </div>
@@ -295,7 +314,7 @@ const StudyGroup: React.FC<{ user: User }> = ({ user }) => {
         })
         .catch(err => {
             console.error("Cam/Mic access denied", err);
-            alert("카메라/마이크 권한이 필요합니다.");
+            alert("카메라/마이크 권한이 필요합니다.\n브라우저 설정에서 권한을 허용해주세요.");
             setVideoEnabled(false);
         });
     }
@@ -343,13 +362,13 @@ const StudyGroup: React.FC<{ user: User }> = ({ user }) => {
             <div className="flex gap-2">
                 <button 
                     onClick={() => setMicEnabled(!micEnabled)}
-                    className={`p-1.5 rounded-full backdrop-blur-md ${micEnabled ? 'bg-white/20 text-white' : 'bg-red-500/80 text-white'}`}
+                    className={`p-1.5 rounded-full backdrop-blur-md transition-colors ${micEnabled ? 'bg-white/20 text-white' : 'bg-red-500/80 text-white'}`}
                 >
                     {micEnabled ? <Mic size={12} /> : <MicOff size={12} />}
                 </button>
                 <button 
                     onClick={() => setVideoEnabled(!videoEnabled)}
-                    className={`p-1.5 rounded-full backdrop-blur-md ${videoEnabled ? 'bg-white/20 text-white' : 'bg-red-500/80 text-white'}`}
+                    className={`p-1.5 rounded-full backdrop-blur-md transition-colors ${videoEnabled ? 'bg-white/20 text-white' : 'bg-red-500/80 text-white'}`}
                 >
                     <Video size={12} />
                 </button>
@@ -470,12 +489,12 @@ const Community: React.FC<{ user: User }> = ({ user }) => {
             </div>
             <p className="text-slate-700 text-sm leading-relaxed mb-4 whitespace-pre-wrap">{post.content}</p>
             <div className="flex items-center gap-4 border-t border-slate-50 pt-3">
-              <button className="flex items-center gap-1.5 text-slate-400 hover:text-pink-500 text-xs transition-colors">
-                <Heart size={16} />
+              <button className="flex items-center gap-1.5 text-slate-400 hover:text-pink-500 text-xs transition-colors group">
+                <Heart size={16} className="group-hover:scale-110 transition-transform" />
                 <span>공감 {post.likes}</span>
               </button>
-              <button className="flex items-center gap-1.5 text-slate-400 hover:text-indigo-500 text-xs transition-colors">
-                <MessageCircle size={16} />
+              <button className="flex items-center gap-1.5 text-slate-400 hover:text-indigo-500 text-xs transition-colors group">
+                <MessageCircle size={16} className="group-hover:scale-110 transition-transform" />
                 <span>댓글</span>
               </button>
             </div>
@@ -540,7 +559,7 @@ const Community: React.FC<{ user: User }> = ({ user }) => {
 };
 
 // 5. Profile / Settings Page
-const Profile: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateAction<User>>, onOpenSettings: () => void }> = ({ user, setUser, onOpenSettings }) => {
+const Profile: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateAction<User>> }> = ({ user, setUser }) => {
   const toggleMode = () => {
     setUser(prev => ({ ...prev, isPublic: !prev.isPublic }));
   };
@@ -549,13 +568,6 @@ const Profile: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateActi
     <div className="pb-24 p-6 bg-white min-h-screen">
       <div className="flex justify-between items-center mb-8">
         <h2 className="text-2xl font-bold text-slate-800">내 정보</h2>
-        <button 
-            onClick={onOpenSettings} 
-            className="flex items-center gap-2 px-3 py-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors border border-slate-200"
-        >
-            <Key size={16} className="text-slate-600" />
-            <span className="text-xs font-bold text-slate-600">API Key 설정</span>
-        </button>
       </div>
       
       <div className="bg-slate-50 p-6 rounded-3xl mb-8 flex items-center gap-5 border border-slate-100">
@@ -606,16 +618,8 @@ const Profile: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateActi
 const App: React.FC = () => {
   const [showSplash, setShowSplash] = useState(true);
   const [user, setUser] = useState<User | null>(null);
-  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
-  const [apiKeyVersion, setApiKeyVersion] = useState(0); // Increments to reload AI data
 
   useEffect(() => {
-    // Check API Key on boot
-    const savedKey = GeminiService.loadSavedKey();
-    if (savedKey) {
-        GeminiService.initializeAI(savedKey);
-    }
-
     const timer = setTimeout(() => {
       setShowSplash(false);
     }, 2500);
@@ -630,24 +634,11 @@ const App: React.FC = () => {
       streak: 0,
       stamps: [false, false, false, false, false, false, false]
     });
-    // Prompt for API key if not present after onboarding
-    if (!GeminiService.hasApiKey()) {
-        setShowApiKeyModal(true);
-    }
-  };
-
-  const handleKeySaved = () => {
-    setApiKeyVersion(prev => prev + 1);
   };
 
   return (
     <Router>
       <div className="max-w-md mx-auto min-h-screen bg-white shadow-2xl overflow-hidden relative font-sans text-slate-800">
-        <ApiKeyModal 
-            isOpen={showApiKeyModal} 
-            onClose={() => setShowApiKeyModal(false)}
-            onSuccess={handleKeySaved} 
-        />
         
         <AnimatePresence mode="wait">
           {showSplash && <Splash key="splash" />}
@@ -665,10 +656,10 @@ const App: React.FC = () => {
             ) : (
               <>
                 <Routes>
-                  <Route path="/" element={<Dashboard user={user} setUser={setUser} onOpenSettings={() => setShowApiKeyModal(true)} keyVersion={apiKeyVersion} />} />
+                  <Route path="/" element={<Dashboard user={user} setUser={setUser} />} />
                   <Route path="/group" element={<StudyGroup user={user} />} />
                   <Route path="/community" element={<Community user={user} />} />
-                  <Route path="/profile" element={<Profile user={user} setUser={setUser} onOpenSettings={() => setShowApiKeyModal(true)} />} />
+                  <Route path="/profile" element={<Profile user={user} setUser={setUser} />} />
                   <Route path="*" element={<Navigate to="/" />} />
                 </Routes>
                 <BottomNav />
