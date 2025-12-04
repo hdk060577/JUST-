@@ -5,9 +5,10 @@ import { User, Goal, Post, Friend } from './types';
 import * as GeminiService from './services/geminiService';
 import Splash from './components/Splash';
 import BottomNav from './components/BottomNav';
+import ApiKeyModal from './components/ApiKeyModal';
 import { 
   Plus, CheckCircle, Video, MicOff, 
-  Send, Heart, Lock, Globe, Trophy, ShoppingBag, MessageCircle, Mic
+  Send, Heart, Lock, Globe, Trophy, ShoppingBag, MessageCircle, Mic, Settings, Key, RefreshCw
 } from 'lucide-react';
 
 // --- Mock Data ---
@@ -56,21 +57,43 @@ const Onboarding: React.FC<{ onComplete: (name: string) => void }> = ({ onComple
 };
 
 // 2. Dashboard Page
-const Dashboard: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateAction<User>> }> = ({ user, setUser }) => {
+interface DashboardProps {
+  user: User;
+  setUser: React.Dispatch<React.SetStateAction<User>>;
+  onOpenSettings: () => void;
+  keyVersion: number; // Used to trigger data refresh
+}
+
+const Dashboard: React.FC<DashboardProps> = ({ user, setUser, onOpenSettings, keyVersion }) => {
   const [quote, setQuote] = useState<string>("오늘도 힘찬 하루 보내세요!");
   const [goals, setGoals] = useState<Goal[]>([]);
   const [loadingGoals, setLoadingGoals] = useState(false);
 
   useEffect(() => {
-    GeminiService.getDailyQuote().then(setQuote);
-    loadAIRecommendation();
-  }, []);
+    // Refresh data whenever keyVersion changes (key saved/deleted)
+    const fetchData = async () => {
+      if (GeminiService.hasApiKey()) {
+        const q = await GeminiService.getDailyQuote();
+        setQuote(q);
+        loadAIRecommendation();
+      } else {
+        setQuote("설정에서 API 키를 등록하면 AI 응원을 받을 수 있어요!");
+        // Load default goals if no key
+        const defaults = await GeminiService.getRecommendedGoals();
+        setGoals(prev => {
+            if (prev.length > 0) return prev; // Don't overwrite if user has goals
+            return defaults;
+        });
+      }
+    };
+    fetchData();
+  }, [keyVersion]);
 
   const loadAIRecommendation = async () => {
     setLoadingGoals(true);
     const recGoals = await GeminiService.getRecommendedGoals();
     setGoals(prev => {
-        // Prevent duplicates for demo
+        // Simple de-duplication
         const newGoals = recGoals.filter(ng => !prev.some(pg => pg.text === ng.text));
         return [...prev, ...newGoals];
     });
@@ -86,22 +109,18 @@ const Dashboard: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateAc
     });
     setGoals(updatedGoals);
 
-    // Check for Stamp logic
     const allCompleted = updatedGoals.length > 0 && updatedGoals.every(g => g.completed);
-    const todayIndex = new Date().getDay(); // 0(Sun) - 6(Sat)
+    const todayIndex = new Date().getDay(); 
     
     if (allCompleted && !user.stamps[todayIndex]) {
-       // Complete today's stamp
        const newStamps = [...user.stamps];
        newStamps[todayIndex] = true;
        
-       let newPoints = user.points + 100; // Daily bonus
+       let newPoints = user.points + 100; 
        let newStreak = user.streak + 1;
 
-       // Check if 7 days consecutive (Full week)
-       // For demo: if all 7 slots are true
        if (newStamps.every(s => s)) {
-         newPoints += 700; // Weekly Bonus
+         newPoints += 700;
          alert("🎉 일주일 연속 달성! 700포인트가 적립되었습니다!");
        }
 
@@ -115,7 +134,17 @@ const Dashboard: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateAc
   };
 
   return (
-    <div className="pb-24 p-6 space-y-6 animate-fade-in">
+    <div className="pb-24 p-6 space-y-6 animate-fade-in relative">
+      {!GeminiService.hasApiKey() && (
+        <div onClick={onOpenSettings} className="bg-red-50 border border-red-100 p-3 rounded-xl flex items-center justify-between cursor-pointer active:bg-red-100 transition-colors">
+            <div className="flex items-center gap-2 text-red-600 text-xs font-bold">
+                <Key size={14} />
+                <span>AI 기능을 위해 API 키를 설정해주세요</span>
+            </div>
+            <Settings size={14} className="text-red-400" />
+        </div>
+      )}
+
       {/* Header / Quote */}
       <motion.div 
         initial={{ opacity: 0, y: -20 }} 
@@ -179,8 +208,13 @@ const Dashboard: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateAc
             <h3 className="font-bold text-lg text-slate-800">오늘의 작은 목표</h3>
             <p className="text-xs text-slate-400">하나씩 천천히 달성해보세요</p>
           </div>
-          <button onClick={loadAIRecommendation} className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors">
-            + AI 추천받기
+          <button 
+            onClick={loadAIRecommendation} 
+            disabled={loadingGoals}
+            className="text-xs font-bold text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors flex items-center gap-1"
+          >
+             {loadingGoals ? <RefreshCw size={12} className="animate-spin"/> : <Plus size={12} />}
+             AI 추천받기
           </button>
         </div>
         
@@ -210,6 +244,12 @@ const Dashboard: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateAc
                 </div>
             </motion.div>
             ))}
+            
+            {goals.length === 0 && !loadingGoals && (
+                <div className="text-center py-8 text-slate-400 text-sm">
+                    아직 목표가 없어요. AI에게 추천을 받아보세요!
+                </div>
+            )}
         </div>
 
         {loadingGoals && (
@@ -500,14 +540,23 @@ const Community: React.FC<{ user: User }> = ({ user }) => {
 };
 
 // 5. Profile / Settings Page
-const Profile: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateAction<User>> }> = ({ user, setUser }) => {
+const Profile: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateAction<User>>, onOpenSettings: () => void }> = ({ user, setUser, onOpenSettings }) => {
   const toggleMode = () => {
     setUser(prev => ({ ...prev, isPublic: !prev.isPublic }));
   };
 
   return (
     <div className="pb-24 p-6 bg-white min-h-screen">
-      <h2 className="text-2xl font-bold text-slate-800 mb-8">내 정보</h2>
+      <div className="flex justify-between items-center mb-8">
+        <h2 className="text-2xl font-bold text-slate-800">내 정보</h2>
+        <button 
+            onClick={onOpenSettings} 
+            className="flex items-center gap-2 px-3 py-2 bg-slate-100 rounded-xl hover:bg-slate-200 transition-colors border border-slate-200"
+        >
+            <Key size={16} className="text-slate-600" />
+            <span className="text-xs font-bold text-slate-600">API Key 설정</span>
+        </button>
+      </div>
       
       <div className="bg-slate-50 p-6 rounded-3xl mb-8 flex items-center gap-5 border border-slate-100">
         <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center text-indigo-600 text-2xl font-bold shadow-sm">
@@ -557,9 +606,16 @@ const Profile: React.FC<{ user: User, setUser: React.Dispatch<React.SetStateActi
 const App: React.FC = () => {
   const [showSplash, setShowSplash] = useState(true);
   const [user, setUser] = useState<User | null>(null);
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [apiKeyVersion, setApiKeyVersion] = useState(0); // Increments to reload AI data
 
   useEffect(() => {
-    // Keep splash for a bit to show animation
+    // Check API Key on boot
+    const savedKey = GeminiService.loadSavedKey();
+    if (savedKey) {
+        GeminiService.initializeAI(savedKey);
+    }
+
     const timer = setTimeout(() => {
       setShowSplash(false);
     }, 2500);
@@ -574,11 +630,25 @@ const App: React.FC = () => {
       streak: 0,
       stamps: [false, false, false, false, false, false, false]
     });
+    // Prompt for API key if not present after onboarding
+    if (!GeminiService.hasApiKey()) {
+        setShowApiKeyModal(true);
+    }
+  };
+
+  const handleKeySaved = () => {
+    setApiKeyVersion(prev => prev + 1);
   };
 
   return (
     <Router>
       <div className="max-w-md mx-auto min-h-screen bg-white shadow-2xl overflow-hidden relative font-sans text-slate-800">
+        <ApiKeyModal 
+            isOpen={showApiKeyModal} 
+            onClose={() => setShowApiKeyModal(false)}
+            onSuccess={handleKeySaved} 
+        />
+        
         <AnimatePresence mode="wait">
           {showSplash && <Splash key="splash" />}
         </AnimatePresence>
@@ -595,10 +665,10 @@ const App: React.FC = () => {
             ) : (
               <>
                 <Routes>
-                  <Route path="/" element={<Dashboard user={user} setUser={setUser} />} />
+                  <Route path="/" element={<Dashboard user={user} setUser={setUser} onOpenSettings={() => setShowApiKeyModal(true)} keyVersion={apiKeyVersion} />} />
                   <Route path="/group" element={<StudyGroup user={user} />} />
                   <Route path="/community" element={<Community user={user} />} />
-                  <Route path="/profile" element={<Profile user={user} setUser={setUser} />} />
+                  <Route path="/profile" element={<Profile user={user} setUser={setUser} onOpenSettings={() => setShowApiKeyModal(true)} />} />
                   <Route path="*" element={<Navigate to="/" />} />
                 </Routes>
                 <BottomNav />
